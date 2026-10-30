@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Tracking Viewer - Purwokerto Loop</title>
+  
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <!-- Chart.js untuk Grafik Elevasi -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; width: 100%; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    
+    body { display: flex; overflow: hidden; }
+    
+    /* Layout: Sidebar & Area Peta */
+    #sidebar {
+      width: 360px;
+      background: #1e1e24;
+      color: #ffffff;
+      display: flex;
+      flex-direction: column;
+      z-index: 1001;
+      box-shadow: 2px 0 10px rgba(0,0,0,0.3);
+    }
+    
+    #main-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    #map {
+      flex: 1;
+      width: 100%;
+      background-color: #e5e3df;
+    }
+
+    /* Panel Elevation Profile di Bawah Peta */
+    #elevation-panel {
+      height: 160px;
+      background: #111116;
+      border-top: 1px solid #333;
+      padding: 10px 15px;
+      position: relative;
+    }
+
+    #elevation-panel h4 {
+      margin: 0 0 5px 0;
+      color: #ff4757;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    /* Sidebar Header */
+    .sidebar-header {
+      padding: 15px;
+      background: #111116;
+      border-bottom: 1px solid #333;
+    }
+    
+    .sidebar-header h3 { margin: 0 0 5px 0; color: #ff4757; font-size: 18px; }
+    .status-badge { font-size: 12px; color: #2ed573; font-weight: bold; }
+
+    /* Daftar Peserta (Leaderboard) */
+    .rider-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px;
+    }
+
+    .rider-card {
+      background: #2b2b36;
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+      border-left: 4px solid #ff4757;
+    }
+
+    .rider-card:hover { background: #3a3a49; }
+    .rider-name { font-weight: bold; font-size: 13px; margin-bottom: 6px; }
+    
+    .rider-info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 3px 8px;
+      font-size: 11px;
+      color: #a4b0be;
+    }
+
+    .rider-coords {
+      grid-column: span 2;
+      font-size: 10px;
+      color: #747d8c;
+      margin-top: 4px;
+      border-top: 1px dashed #3a3a49;
+      padding-top: 4px;
+    }
+
+    .hr-badge { color: #ff6b6b; font-weight: bold; }
+
+    /* Transisi Gerak Marker 5 Detik Mulus */
+    .leaflet-marker-icon {
+      transition: transform 5s linear !important;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Sidebar Penonton -->
+  <div id="sidebar">
+    <div class="sidebar-header">
+      <h3>PURWOKERTO LIVE TRACKING</h3>
+      <span class="status-badge">● 20 RIDERS ACTIVE</span>
+    </div>
+    
+    <div class="rider-list" id="riderList">
+      <!-- Card Peserta Di-generate Otomatis oleh JS -->
+    </div>
+  </div>
+
+  <!-- Area Peta & Elevasi -->
+  <div id="main-content">
+    <div id="map"></div>
+    
+    <!-- Panel Grafik Elevasi -->
+    <div id="elevation-panel">
+      <h4>Elevation Profile (Rute Purwokerto)</h4>
+      <canvas id="elevationChart" style="max-height: 110px;"></canvas>
+    </div>
+  </div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  
+  <script>
+    document.addEventListener("DOMContentLoaded", function() {
+      // 1. Inisialisasi Peta
+      const map = L.map('map');
+
+      // 2. Tile Layer Esri Topo
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19,
+        attribution: 'Tiles &copy; Esri'
+      }).addTo(map);
+
+      // 3. Titik Koordinat & Elevasi Area Purwokerto (Dari GPX Plotaroute)
+      const routeCoordinates = [
+        { latlng: [-7.4350539, 109.2506196], ele: 69, name: "Alun-Alun Purwokerto" },
+        { latlng: [-7.4352569, 109.2488301], ele: 70, name: "Jl. Jend. Soedirman" },
+        { latlng: [-7.4277307, 109.2486777], ele: 80, name: "Pasar Manis" },
+        { latlng: [-7.4278140, 109.2436631], ele: 85, name: "Kranji" },
+        { latlng: [-7.4278812, 109.2404766], ele: 82, name: "Situsari" },
+        { latlng: [-7.4259014, 109.2335458], ele: 77, name: "Karangklesem" },
+        { latlng: [-7.4249348, 109.2296083], ele: 81, name: "Tanjung" },
+        { latlng: [-7.4222037, 109.2296104], ele: 81, name: "Karanglewas" },
+        { latlng: [-7.4197892, 109.2298186], ele: 82, name: "Pasir Mrican" },
+        { latlng: [-7.4205422, 109.2329321], ele: 82, name: "Kedungwringin" },
+        { latlng: [-7.4232007, 109.2439313], ele: 86, name: "Sokamenak" },
+        { latlng: [-7.4169544, 109.2447038], ele: 94, name: "Bancarkembar" },
+        { latlng: [-7.4172530, 109.2498343], ele: 91, name: "Kampus UNSOED" },
+        { latlng: [-7.4176697, 109.2541730], ele: 91, name: "Grendeng" },
+        { latlng: [-7.4229703, 109.2548747], ele: 86, name: "Sumampir" },
+        { latlng: [-7.4274256, 109.2556129], ele: 80, name: "Arcawinangun" },
+        { latlng: [-7.4275599, 109.2543554], ele: 81, name: "Gor Satria" },
+        { latlng: [-7.4290698, 109.2547417], ele: 80, name: "Purwokerto Timur" },
+        { latlng: [-7.4291769, 109.2534757], ele: 77, name: "Mersi" },
+        { latlng: [-7.4303667, 109.2535594], ele: 75, name: "Kranji Timur" },
+        { latlng: [-7.4306089, 109.2515724], ele: 73, name: "Jl. HR Bunyamin" },
+        { latlng: [-7.4316701, 109.2516925], ele: 72, name: "RITA Supermall" },
+        { latlng: [-7.4339100, 109.2524285], ele: 70, name: "Kabupaten" },
+        { latlng: [-7.4348937, 109.2527375], ele: 69, name: "Karangpucung" },
+        { latlng: [-7.4350282, 109.2506969], ele: 69, name: "Finish Alun-Alun" }
+      ];
+
+      // Format array koordinat untuk Polyline
+      const pathPoints = routeCoordinates.map(r => r.latlng);
+
+      // Gambar Garis Rute Utama
+      const polyline = L.polyline(pathPoints, { color: '#ff4757', weight: 5, opacity: 0.85 }).addTo(map);
+      map.fitBounds(polyline.getBounds(), { padding: [30, 30] });
+
+      // Add Marker START & FINISH di Purwokerto
+      L.marker(pathPoints[0]).addTo(map).bindPopup("<b>START: Alun-Alun Purwokerto</b>");
+      L.marker(pathPoints[pathPoints.length - 1]).addTo(map).bindPopup("<b>FINISH: Alun-Alun Purwokerto</b>");
+
+      // 4. Render Grafik Elevasi (Chart.js)
+      const ctx = document.getElementById('elevationChart').getContext('2d');
+      new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: routeCoordinates.map(r => r.name),
+          datasets: [{
+            label: 'Ketinggian (mdpl)',
+            data: routeCoordinates.map(r => r.ele),
+            borderColor: '#ff4757',
+            backgroundColor: 'rgba(255, 71, 87, 0.2)',
+            fill: true,
+            tension: 0.3,
+            borderWidth: 2,
+            pointRadius: 2
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: '#888', font: { size: 9 } }, grid: { display: false } },
+            y: { ticks: { color: '#888', font: { size: 10 } }, grid: { color: '#222' } }
+          }
+        }
+      });
+
+      // 5. Wadah Marker Peta
+      const riderMarkers = {};
+
+      // 6. Daftar 20 Peserta Rute Purwokerto
+      const riders = [
+        { id: "R01", bib: "01", name: "Budi Santoso", routeIndex: 0, speed: 28, battery: 92, hr: 142 },
+        { id: "R02", bib: "02", name: "Siti Rahma", routeIndex: 1, speed: 25, battery: 88, hr: 155 },
+        { id: "R03", bib: "03", name: "Agus Pratama", routeIndex: 2, speed: 30, battery: 75, hr: 168 },
+        { id: "R04", bib: "04", name: "Dewi Lestari", routeIndex: 3, speed: 22, battery: 95, hr: 135 },
+        { id: "R05", bib: "05", name: "Eko Prasetyo", routeIndex: 4, speed: 27, battery: 60, hr: 148 },
+        { id: "R06", bib: "06", name: "Fajar Nugraha", routeIndex: 5, speed: 31, battery: 82, hr: 162 },
+        { id: "R07", bib: "07", name: "Gita Gutawa", routeIndex: 6, speed: 24, battery: 70, hr: 138 },
+        { id: "R08", bib: "08", name: "Hendra Wijaya", routeIndex: 7, speed: 29, battery: 55, hr: 150 },
+        { id: "R09", bib: "09", name: "Indah Permata", routeIndex: 8, speed: 26, battery: 85, hr: 145 },
+        { id: "R10", bib: "10", name: "Joko Widodo", routeIndex: 9, speed: 32, battery: 40, hr: 172 },
+        { id: "R11", bib: "11", name: "Kurnia Meiga", routeIndex: 10, speed: 27, battery: 89, hr: 140 },
+        { id: "R12", bib: "12", name: "Lestari Putri", routeIndex: 11, speed: 23, battery: 78, hr: 132 },
+        { id: "R13", bib: "13", name: "Muhammad Rizky", routeIndex: 12, speed: 29, battery: 91, hr: 158 },
+        { id: "R14", bib: "14", name: "Nabila Syakieb", routeIndex: 13, speed: 26, battery: 67, hr: 144 },
+        { id: "R15", bib: "15", name: "Oki Setiana", routeIndex: 14, speed: 21, battery: 83, hr: 128 },
+        { id: "R16", bib: "16", name: "Pratama Arhan", routeIndex: 15, speed: 33, battery: 94, hr: 175 },
+        { id: "R17", bib: "17", name: "Qory Sandioriva", routeIndex: 16, speed: 25, battery: 72, hr: 139 },
+        { id: "R18", bib: "18", name: "Raffi Ahmad", routeIndex: 17, speed: 28, battery: 81, hr: 152 },
+        { id: "R19", bib: "19", name: "Sule Sutisna", routeIndex: 18, speed: 24, battery: 65, hr: 146 },
+        { id: "R20", bib: "20", name: "Taufik Hidayat", routeIndex: 19, speed: 30, battery: 88, hr: 160 }
+      ];
+
+      // Fungsi menghitung Pace (menit/km) dari Speed (km/h)
+      function calculatePace(speed) {
+        if (!speed || speed <= 0) return "-";
+        const totalMinutes = 60 / speed;
+        const mins = Math.floor(totalMinutes);
+        const secs = Math.round((totalMinutes - mins) * 60);
+        return `${mins}'${secs < 10 ? '0' : ''}${secs}"/km`;
+      }
+
+      // 7. Fungsi Update Posisi Peserta & UI
+      function updateDashboard() {
+        const riderListContainer = document.getElementById('riderList');
+        riderListContainer.innerHTML = '';
+
+        // Urutkan leaderboard dari peserta terdepan
+        const sortedRiders = [...riders].sort((a, b) => b.routeIndex - a.routeIndex);
+
+        sortedRiders.forEach(rider => {
+          const pointData = routeCoordinates[rider.routeIndex];
+          const latLng = pointData.latlng;
+          const ele = pointData.ele;
+          const locationName = pointData.name;
+          const latFixed = latLng[0].toFixed(5);
+          const lngFixed = latLng[1].toFixed(5);
+          const paceStr = calculatePace(rider.speed);
+
+          // Variasi Heart Rate Dinamis
+          const currentHR = rider.hr + Math.floor(Math.random() * 5 - 2);
+
+          // Popup Konten
+          const popupContent = `
+            <div style="font-size:12px;">
+              <b style="color:#ff4757;">#${rider.bib} ${rider.name}</b><br>
+              <b>Lokasi:</b> ${locationName}<br>
+              <b>Spd:</b> ${rider.speed} km/h | <b>Pace:</b> ${paceStr}<br>
+              <b>Ele:</b> ${ele} m | <b>HR:</b> <span style="color:#ff4757;font-weight:bold;">♥ ${currentHR}</span><br>
+              <b>Bat:</b> ${rider.battery}%<br>
+              <div style="font-size:10px; color:#555; margin-top:3px;">
+                <b>GPS:</b> ${latFixed}, ${lngFixed}
+              </div>
+            </div>
+          `;
+
+          // Update / Buat Marker di Peta
+          if (riderMarkers[rider.id]) {
+            riderMarkers[rider.id].setLatLng(latLng);
+            riderMarkers[rider.id].getPopup().setContent(popupContent);
+          } else {
+            riderMarkers[rider.id] = L.marker(latLng).addTo(map).bindPopup(popupContent);
+          }
+
+          // Render Card di Sidebar Leaderboard
+          const card = document.createElement('div');
+          card.className = 'rider-card';
+          card.innerHTML = `
+            <div class="rider-name">#${rider.bib} - ${rider.name}</div>
+            <div class="rider-info-grid">
+              <span>Spd: <b>${rider.speed} km/h</b></span>
+              <span>Pace: <b>${paceStr}</b></span>
+              <span>Ele: <b>${ele} m</b></span>
+              <span>HR: <b class="hr-badge">♥ ${currentHR}</b></span>
+              <span>Bat: <b>${rider.battery}%</b></span>
+              <span>Pos: <b>${locationName}</b></span>
+              <div class="rider-coords">Lat: ${latFixed} | Lng: ${lngFixed}</div>
+            </div>
+          `;
+
+          card.onclick = function() {
+            map.flyTo(latLng, 15, { duration: 1.5 });
+            riderMarkers[rider.id].openPopup();
+          };
+
+          riderListContainer.appendChild(card);
+
+          // Pergerakan Simulasi
+          if (rider.routeIndex < routeCoordinates.length - 1) {
+            rider.routeIndex++;
+          } else {
+            rider.routeIndex = 0;
+          }
+        });
+      }
+
+      // Interval pembaruan 6 detik
+      updateDashboard();
+      setInterval(updateDashboard, 6000);
+
+      setTimeout(() => { map.invalidateSize(); }, 300);
+    });
+  </script>
+
+</body>
+</html>
